@@ -1,4 +1,5 @@
 package paxos;
+
 import java.rmi.Remote;
 import java.rmi.RemoteException;
 
@@ -9,8 +10,10 @@ import java.rmi.RemoteException;
  * Decide is the RMI that proposer broadcasts decision once consensus reaches.
  * Please don't change the interface.
  */
-public interface PaxosRMI extends Remote{
+public interface PaxosRMI extends Remote {
     Response Prepare(Request req) throws RemoteException;
+
     Response Accept(Request req) throws RemoteException;
+
     Response Decide(Request req) throws RemoteException;
 }

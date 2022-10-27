@@ -7,9 +7,8 @@ import java.io.Serializable;
  * Hint: Make it more generic such that you can use it for each RMI call.
  */
 public class Response implements Serializable {
-    static final long serialVersionUID=22L;
+    static final long serialVersionUID = 22L;
     // your data here
-
 
     // Your constructor and methods here
 }

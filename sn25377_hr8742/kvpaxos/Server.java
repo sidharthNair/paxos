@@ -1,4 +1,5 @@
 package kvpaxos;
+
 import paxos.Paxos;
 import paxos.State;
 // You are allowed to call Paxos.Status to check if agreement was made.
@@ -21,8 +22,7 @@ public class Server implements KVPaxosRMI {
 
     // Your definitions here
 
-
-    public Server(String[] servers, int[] ports, int me){
+    public Server(String[] servers, int[] ports, int me) {
         this.me = me;
         this.servers = servers;
         this.ports = ports;
@@ -30,29 +30,25 @@ public class Server implements KVPaxosRMI {
         this.px = new Paxos(me, servers, ports);
         // Your initialization code here
 
-
-
-        try{
+        try {
             System.setProperty("java.rmi.server.hostname", this.servers[this.me]);
             registry = LocateRegistry.getRegistry(this.ports[this.me]);
             stub = (KVPaxosRMI) UnicastRemoteObject.exportObject(this, this.ports[this.me]);
             registry.rebind("KVPaxos", stub);
-        } catch(Exception e){
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-
     // RMI handlers
-    public Response Get(Request req){
+    public Response Get(Request req) {
         // Your code here
 
     }
 
-    public Response Put(Request req){
+    public Response Put(Request req) {
         // Your code here
 
     }
-
 
 }

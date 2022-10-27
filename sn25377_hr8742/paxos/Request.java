@@ -1,4 +1,5 @@
 package paxos;
+
 import java.io.Serializable;
 
 /**
@@ -8,9 +9,8 @@ import java.io.Serializable;
  * Hint: Easier to make each variable public
  */
 public class Request implements Serializable {
-    static final long serialVersionUID=1L;
+    static final long serialVersionUID = 1L;
     // Your data here
-
 
     // Your constructor and methods here
 }

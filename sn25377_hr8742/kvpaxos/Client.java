@@ -3,15 +3,13 @@ package kvpaxos;
 import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 
-
 public class Client {
     String[] servers;
     int[] ports;
 
     // Your data here
 
-
-    public Client(String[] servers, int[] ports){
+    public Client(String[] servers, int[] ports) {
         this.servers = servers;
         this.ports = ports;
         // Your initialization code here
@@ -30,31 +28,31 @@ public class Client {
      * Please use Call() to send all RMIs and please don't change
      * this function.
      */
-    public Response Call(String rmi, Request req, int id){
+    public Response Call(String rmi, Request req, int id) {
         Response callReply = null;
         KVPaxosRMI stub;
-        try{
-            Registry registry= LocateRegistry.getRegistry(this.ports[id]);
-            stub=(KVPaxosRMI) registry.lookup("KVPaxos");
-            if(rmi.equals("Get"))
+        try {
+            Registry registry = LocateRegistry.getRegistry(this.ports[id]);
+            stub = (KVPaxosRMI) registry.lookup("KVPaxos");
+            if (rmi.equals("Get"))
                 callReply = stub.Get(req);
-            else if(rmi.equals("Put")){
-                callReply = stub.Put(req);}
-            else
+            else if (rmi.equals("Put")) {
+                callReply = stub.Put(req);
+            } else
                 System.out.println("Wrong parameters!");
-        } catch(Exception e){
+        } catch (Exception e) {
             return null;
         }
         return callReply;
     }
 
     // RMI handlers
-    public Integer Get(String key){
+    public Integer Get(String key) {
         // Your code here
 
     }
 
-    public boolean Put(String key, Integer value){
+    public boolean Put(String key, Integer value) {
         // Your code here
     }
 

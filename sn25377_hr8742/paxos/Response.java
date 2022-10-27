@@ -1,4 +1,5 @@
 package paxos;
+
 import java.io.Serializable;
 
 /**
@@ -7,9 +8,8 @@ import java.io.Serializable;
  * Hint: Make it more generic such that you can use it for each RMI call.
  */
 public class Response implements Serializable {
-    static final long serialVersionUID=2L;
+    static final long serialVersionUID = 2L;
     // your data here
-
 
     // Your constructor and methods here
 }
