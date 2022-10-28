@@ -20,7 +20,7 @@ MAIN = org.junit.runner.JUnitCore
 
 .SUFFIXES : .class .java
 
-all: $(PAXOS) $(KVPAXOS)
+all:
 	$(MKTARGET) | $(JAVAC) $(JAVAC_FLAGS) $(JAVAC_CP) $(JARS) $(SRCS)
 
 paxos:
