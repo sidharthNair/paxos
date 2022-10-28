@@ -372,6 +372,11 @@ public class Paxos implements PaxosRMI, Runnable {
      * any instances that should be forgotten after the update.
      */
     public void updateHighestDone(int index, int highestDone) {
+        if (this.highestDone[index] == highestDone) {
+            // No need to update the array
+            return;
+        }
+
         // Update array index
         this.highestDoneMutex.lock();
         this.highestDone[index] = highestDone;
