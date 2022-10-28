@@ -10,6 +10,14 @@ import java.io.Serializable;
 public class Response implements Serializable {
     static final long serialVersionUID = 2L;
     // your data here
+    boolean ack;
+    int proposal;
+    Object value;
 
     // Your constructor and methods here
+    public Response(boolean ack, int proposal, Object value) {
+        this.ack = ack;
+        this.proposal = proposal;
+        this.value = value;
+    }
 }
