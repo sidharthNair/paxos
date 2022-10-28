@@ -6,6 +6,7 @@ import java.rmi.registry.Registry;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
+import java.util.Arrays;
 import java.util.HashMap;
 
 /**
@@ -24,8 +25,7 @@ public class Paxos implements PaxosRMI, Runnable {
     AtomicBoolean dead; // for testing
     AtomicBoolean unreliable; // for testing
 
-    // Your data here
-
+    // Helper class to represent the peer's knowledge of the paxos instance
     public class PaxosInstance {
 
         int seq;
@@ -42,10 +42,20 @@ public class Paxos implements PaxosRMI, Runnable {
         }
     }
 
+    // Maps sequence no. -> paxos instance
     HashMap<Integer, PaxosInstance> instances;
 
+    // For transmitting values to the thread
     int seq;
     Object value;
+
+    // For keeping track of the instances that are not needed any more
+    // The lock is required since the array may be access and modified
+    // by multiple threads at the same time. We could use this.mutex but
+    // that is being used for the instances HashMap and we can get finer
+    // locking granularity by keeping the accesses separate.
+    ReentrantLock highestDoneMutex;
+    int[] highestDone;
 
     /**
      * Call the constructor to create a Paxos peer.
@@ -65,6 +75,10 @@ public class Paxos implements PaxosRMI, Runnable {
         this.instances = new HashMap<Integer, PaxosInstance>();
         this.seq = -1;
         this.value = null;
+
+        this.highestDoneMutex = new ReentrantLock();
+        this.highestDone = new int[this.peers.length];
+        Arrays.fill(highestDone, -1);
 
         // register peers, do not modify this part
         try {
@@ -129,8 +143,12 @@ public class Paxos implements PaxosRMI, Runnable {
      * is reached.
      */
     public void Start(int seq, Object value) {
-        // Your code here
-        System.out.println(this.me + " starting");
+        if (seq < this.Min()) {
+            // Ignore paxos instances with seq < Min()
+            return;
+        }
+
+        // HashMaps are not thread safe, so we need to use a lock when accessing
         this.mutex.lock();
         instances.put(seq, new PaxosInstance());
         this.seq = seq;
@@ -141,6 +159,22 @@ public class Paxos implements PaxosRMI, Runnable {
         thread.start();
     }
 
+    /**
+     * Paxos initiator loop (pseudo-code)
+     *
+     *  proposer(v):
+     *  while not decided: do
+     *      choose n, unique and higher than any n seen so far
+     *      send prepare(n) to all servers including self
+     *      if prepare_ok(n, n_a, v_a) from majority then
+     *          v' = v_a with highest n_a; choose own v otherwise
+     *          send accept(n, v') to all
+     *          if accept_ok(n) from majority then
+     *              send deicded(v') to all
+     *          end if
+     *      end if
+     *  end while
+     */
     @Override
     public void run() {
         this.mutex.lock();
@@ -149,7 +183,7 @@ public class Paxos implements PaxosRMI, Runnable {
         PaxosInstance instance = instances.get(seq);
         this.mutex.unlock();
 
-        int highestProposalSeen = 0;
+        int highestProposalSeen = -1;
         int numPeers = this.peers.length;
 
         while ((instance.status.state == State.Pending) && !this.isDead()) {
@@ -157,19 +191,24 @@ public class Paxos implements PaxosRMI, Runnable {
             // P0: 0 3 6 ...
             // P1: 1 4 7 ...
             // P2: 2 5 8 ...
-            int proposal = highestProposalSeen % numPeers >= this.me ?
-                (1 + highestProposalSeen / numPeers) * numPeers + this.me :
-                (highestProposalSeen / numPeers) * numPeers + this.me;
+            int proposal = (highestProposalSeen % numPeers >= this.me)
+                    ? (1 + highestProposalSeen / numPeers) * numPeers + this.me
+                    : (highestProposalSeen / numPeers) * numPeers + this.me;
 
             int acks = 0;
             int largestAcceptedProposal = -1;
             Object valueToPropose = value;
-            Request req = new Request(seq, proposal, value);
+            // Every request and response piggybacks the peer's highestDone value
+            Request req = new Request(seq, proposal, value, this.highestDone[this.me]);
             Response resp;
             for (int i = 0; i < numPeers; i++) {
-                resp = (i == this.me) ?
-                    this.Prepare(req) :
-                    this.Call("Prepare", req, i);
+                resp = (i == this.me) ? this.Prepare(req) : this.Call("Prepare", req, i);
+                if (resp == null) {
+                    // Peer has "crashed"
+                    continue;
+                }
+                // Update highestDone array with the response's piggybacked value
+                this.updateHighestDone(i, resp.highestDone);
                 if (!resp.ack) {
                     // Response was ignored, update highest seen proposal number
                     highestProposalSeen = Math.max(highestProposalSeen, resp.proposal);
@@ -177,21 +216,29 @@ public class Paxos implements PaxosRMI, Runnable {
                 }
                 acks++;
                 if (resp.proposal > largestAcceptedProposal) {
+                    // The peer has already accepted a value, and its larger than
+                    // any accepted value we have seen so far. So we need to propose
+                    // the accompanying value.
                     largestAcceptedProposal = resp.proposal;
                     valueToPropose = resp.value;
                 }
             }
 
             if (!(acks > (numPeers / 2))) {
+                // We did not get a majority of acks
                 continue;
             }
 
             acks = 0;
-            req = new Request(seq, proposal, valueToPropose);
+            req = new Request(seq, proposal, valueToPropose, this.highestDone[this.me]);
             for (int i = 0; i < numPeers; i++) {
-                resp = (i == this.me) ?
-                    this.Accept(req) :
-                    this.Call("Accept", req, i);
+                resp = (i == this.me) ? this.Accept(req) : this.Call("Accept", req, i);
+                if (resp == null) {
+                    // Peer has "crashed"
+                    continue;
+                }
+                // Update highestDone array with the response's piggybacked value
+                this.updateHighestDone(i, resp.highestDone);
                 if (!resp.ack) {
                     // Response was ignored, update highest seen proposal number
                     highestProposalSeen = Math.max(highestProposalSeen, resp.proposal);
@@ -201,20 +248,42 @@ public class Paxos implements PaxosRMI, Runnable {
             }
 
             if (!(acks > (numPeers / 2))) {
+                // We did not get a majority of acks
                 continue;
             }
 
             for (int i = 0; i < numPeers; i++) {
-                resp = (i == this.me) ?
-                    this.Decide(req) :
-                    this.Call("Decide", req, i);
+                resp = (i == this.me) ? this.Decide(req) : this.Call("Decide", req, i);
+                if (resp == null) {
+                    // Peer has "crashed"
+                    continue;
+                }
+                this.updateHighestDone(i, resp.highestDone);
             }
         }
     }
 
-    // RMI handler
+    /**
+     * RMI Handler for prepare requests (pseudo-code)
+     *
+     *  acceptor's state:
+     *  n_p (highest prepare seen)
+     *  n_a, v_a (highest accept seen)
+     *
+     *  acceptor's prepare(n) handler:
+     *  if n > n_p then
+     *      n_p = n
+     *      reply prepare_ok(n, n_a, v_a)
+     *  else
+     *      prepare_reject
+     *  end if
+     */
     public Response Prepare(Request req) {
         int seq = req.seq;
+        // Update highestDone array with piggybacked value. Instead of piggybacking
+        // the PID with the message we can compute it from the proposal number:
+        // Request PID = Proposal Number % Number of Peers
+        this.updateHighestDone(req.proposal % this.peers.length, req.highestDone);
 
         this.mutex.lock();
         if (!instances.containsKey(seq)) {
@@ -224,16 +293,36 @@ public class Paxos implements PaxosRMI, Runnable {
         this.mutex.unlock();
 
         if (req.proposal > instance.highestPrepare) {
-            System.out.println(seq + ":" + this.me + " got higher " + req.proposal + " " + instance.highestPrepare);
+            // This is the highest proposal number we have seen, so we return a promise
+            // to not acknowledge any proposals < this one
             instance.highestPrepare = req.proposal;
-            return new Response(true, instance.highestAcceptedProposal, instance.highestAcceptedValue);
+            return new Response(true, instance.highestAcceptedProposal, instance.highestAcceptedValue, this.highestDone[this.me]);
         }
-        System.out.println(seq + ":" + this.me + " rejecting " + req.proposal + " " + instance.highestPrepare);
-        return new Response(false, instance.highestPrepare, null);
+        // Reject the proposal since it is <= the highest we have seen. The highest
+        // proposal is piggybacked so the proposing peer can update its proposal number
+        return new Response(false, instance.highestPrepare, null, this.highestDone[this.me]);
     }
 
+    /**
+     * RMI Handler for accept requests (pseudo-code)
+     *
+     *  acceptor's state:
+     *  n_p (highest prepare seen)
+     *  n_a, v_a (highest accept seen)
+     *
+     *  acceptor's accept(n, v) handler:
+     *  if n >= n_p then
+     *      n_p = n
+     *      n_a = n
+     *      v_a = v
+     *      reply accept_ok(n)
+     *  else
+     *      accept_reject
+     *  end if
+     */
     public Response Accept(Request req) {
         int seq = req.seq;
+        this.updateHighestDone(req.proposal % this.peers.length, req.highestDone);
 
         this.mutex.lock();
         if (!instances.containsKey(seq)) {
@@ -243,16 +332,25 @@ public class Paxos implements PaxosRMI, Runnable {
         this.mutex.unlock();
 
         if (req.proposal >= instance.highestPrepare) {
+            // The proposal is >= the highest prepare proposal we have seen. So we update
+            // our paxos instance and return an accept response
             instance.highestPrepare = req.proposal;
             instance.highestAcceptedProposal = req.proposal;
             instance.highestAcceptedValue = req.value;
-            return new Response(true, instance.highestAcceptedProposal, instance.highestAcceptedValue);
+            return new Response(true, instance.highestAcceptedProposal, instance.highestAcceptedValue, this.highestDone[this.me]);
         }
-        return new Response(false, instance.highestPrepare, null);
+        // Reject the accept request since it is less than the highest we have seen
+        return new Response(false, instance.highestPrepare, null, this.highestDone[this.me]);
     }
 
+    /**
+     * RMI Handler for decide requests
+     *
+     * Here we simply update the peer's decided value and state for this paxos instance
+     */
     public Response Decide(Request req) {
         int seq = req.seq;
+        this.updateHighestDone(req.proposal % this.peers.length, req.highestDone);
 
         this.mutex.lock();
         if (!instances.containsKey(seq)) {
@@ -261,10 +359,31 @@ public class Paxos implements PaxosRMI, Runnable {
         PaxosInstance instance = instances.get(seq);
         this.mutex.unlock();
 
+        // We will only receive a decide request if the sender has received a majority
+        // of acknowledged accept requests. So it is safe to update our status to decided.
         instance.status.v = req.value;
         instance.status.state = State.Decided;
 
-        return new Response(true, req.proposal, req.value);
+        return new Response(true, req.proposal, req.value, this.highestDone[this.me]);
+    }
+
+    /**
+     * Helper function to update highestDone array and remove
+     * any instances that should be forgotten after the update.
+     */
+    public void updateHighestDone(int index, int highestDone) {
+        // Update array index
+        this.highestDoneMutex.lock();
+        this.highestDone[index] = highestDone;
+        this.highestDoneMutex.unlock();
+
+        // Get the minimum in the array
+        int min = this.Min();
+
+        // Discard all instances with seq < min
+        this.mutex.lock();
+        this.instances.entrySet().removeIf(entry -> (entry.getKey() < min));
+        this.mutex.unlock();
     }
 
     /**
@@ -274,7 +393,10 @@ public class Paxos implements PaxosRMI, Runnable {
      * see the comments for Min() for more explanation.
      */
     public void Done(int seq) {
-        // Your code here
+        // Update this peer's highestDone element
+        this.highestDoneMutex.lock();
+        this.highestDone[this.me] = Math.max(this.highestDone[this.me], seq);
+        this.highestDoneMutex.unlock();
     }
 
     /**
@@ -283,8 +405,16 @@ public class Paxos implements PaxosRMI, Runnable {
      * this peer.
      */
     public int Max() {
-        // Your code here
-        return this.seq;
+        // Compute the max as the largest instance in instances
+        int max = -1;
+
+        this.mutex.lock();
+        for (int seq : instances.keySet()) {
+            max = Math.max(max, seq);
+        }
+        this.mutex.unlock();
+
+        return max;
     }
 
     /**
@@ -316,8 +446,14 @@ public class Paxos implements PaxosRMI, Runnable {
      * instances.
      */
     public int Min() {
-        // Your code here
-        return 0;
+        // Compute the min as the smallest value in highestDone
+        int min = Integer.MAX_VALUE;
+        this.highestDoneMutex.lock();
+        for (int i = 0; i < this.highestDone.length; i++) {
+            min = Math.min(min, highestDone[i]);
+        }
+        this.highestDoneMutex.unlock();
+        return min + 1;
     }
 
     /**
@@ -328,6 +464,11 @@ public class Paxos implements PaxosRMI, Runnable {
      * it should not contact other Paxos peers.
      */
     public retStatus Status(int seq) {
+        if (seq < this.Min()) {
+            // Return forggoten for instances with seq < Min()
+            return new retStatus(State.Forgotten, null);
+        }
+
         this.mutex.lock();
         if (!instances.containsKey(seq)) {
             instances.put(seq, new PaxosInstance());

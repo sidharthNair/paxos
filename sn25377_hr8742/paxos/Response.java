@@ -13,11 +13,13 @@ public class Response implements Serializable {
     boolean ack;
     int proposal;
     Object value;
+    int highestDone;
 
     // Your constructor and methods here
-    public Response(boolean ack, int proposal, Object value) {
+    public Response(boolean ack, int proposal, Object value, int highestDone) {
         this.ack = ack;
         this.proposal = proposal;
         this.value = value;
+        this.highestDone = highestDone;
     }
 }
