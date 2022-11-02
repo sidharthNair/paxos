@@ -6,7 +6,13 @@ MKTARGET = mkdir -p $(TARGET)
 JAVAC_FLAGS = -g -d $(TARGET)
 JAVAC_CP = -cp
 
-JARS = junit-4.12.jar:hamcrest-core-1.3.jar
+ifdef OS
+   	PATH_SEPARATOR = ;
+else
+	PATH_SEPARATOR = :
+endif
+
+JARS = junit-4.12.jar$(PATH_SEPARATOR)hamcrest-core-1.3.jar
 
 PAXOS = paxos/*.java
 KVPAXOS = kvpaxos/*.java
@@ -21,18 +27,18 @@ MAIN = org.junit.runner.JUnitCore
 .SUFFIXES : .class .java
 
 all:
-	$(MKTARGET) | $(JAVAC) $(JAVAC_FLAGS) $(JAVAC_CP) $(JARS) $(SRCS)
+	$(MKTARGET) | $(JAVAC) $(JAVAC_FLAGS) $(JAVAC_CP) "$(JARS)" $(SRCS)
 
 paxos:
-	$(MKTARGET) | $(JAVAC) $(JAVAC_FLAGS) $(JAVAC_CP) $(JARS) $(PAXOS)
+	$(MKTARGET) | $(JAVAC) $(JAVAC_FLAGS) $(JAVAC_CP) "$(JARS)" $(PAXOS)
 
 kvpaxos: all
 
 testpaxos:
-	$(JVM) $(JAVAC_CP) $(JARS):$(TARGET) $(MAIN) $(PAXOS_TEST)
+	$(JVM) $(JAVAC_CP) "$(JARS)$(PATH_SEPARATOR)$(TARGET)" $(MAIN) $(PAXOS_TEST)
 
 testkvpaxos:
-	$(JVM) $(JAVAC_CP) $(JARS):$(TARGET) $(MAIN) $(KVPAXOS_TEST)
+	$(JVM) $(JAVAC_CP) "$(JARS)$(PATH_SEPARATOR)$(TARGET)" $(MAIN) $(KVPAXOS_TEST)
 
 test: testpaxos testkvpaxos
 
