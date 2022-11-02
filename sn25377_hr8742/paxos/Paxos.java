@@ -360,8 +360,13 @@ public class Paxos implements PaxosRMI, Runnable {
             return;
         }
 
-        // Update array index
-        this.highestDone[index] = highestDone;
+        // Update array index. We need a lock here since if Done() is called at
+        // the same time as an RMI updateHighestDone() with this.me as the index,
+        // there could be a race condition in setting the value. Another way to fix
+        // this is don't update in RMIs if (index == this.me) but this is cleaner.
+        this.mutex.lock();
+        this.highestDone[index] = Math.max(this.highestDone[index], highestDone);
+        this.mutex.unlock();
 
         // Get the minimum in the array
         int min = this.Min();
@@ -382,7 +387,7 @@ public class Paxos implements PaxosRMI, Runnable {
      */
     public void Done(int seq) {
         // Update this peer's highestDone element
-        this.updateHighestDone(this.me, Math.max(this.highestDone[this.me], seq));
+        this.updateHighestDone(this.me, seq);
     }
 
     /**
