@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
 import java.util.Arrays;
-import java.util.HashMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * This class is the main class you need to implement paxos instances.
@@ -28,7 +28,7 @@ public class Paxos implements PaxosRMI, Runnable {
     // Helper class to represent the peer's knowledge of the paxos instance
     public class PaxosInstance {
 
-        int seq;
+        Object initialValue;
         retStatus status;
         int highestPrepare; // n_p
         int highestAcceptedProposal; // n_a
@@ -43,18 +43,12 @@ public class Paxos implements PaxosRMI, Runnable {
     }
 
     // Maps sequence no. -> paxos instance
-    HashMap<Integer, PaxosInstance> instances;
+    ConcurrentHashMap<Integer, PaxosInstance> instances;
 
     // For transmitting values to the thread
-    int seq;
-    Object value;
+    ConcurrentHashMap<Thread, Integer> seqs;
 
     // For keeping track of the instances that are not needed any more
-    // The lock is required since the array may be access and modified
-    // by multiple threads at the same time. We could use this.mutex but
-    // that is being used for the instances HashMap and we can get finer
-    // locking granularity by keeping the accesses separate.
-    ReentrantLock highestDoneMutex;
     int[] highestDone;
 
     /**
@@ -71,14 +65,12 @@ public class Paxos implements PaxosRMI, Runnable {
         this.dead = new AtomicBoolean(false);
         this.unreliable = new AtomicBoolean(false);
 
-        // Your initialization code here
-        this.instances = new HashMap<Integer, PaxosInstance>();
-        this.seq = -1;
-        this.value = null;
+        // We use concurrent hashmaps because they may be accessed from multiple threads
+        this.instances = new ConcurrentHashMap<Integer, PaxosInstance>();
+        this.seqs = new ConcurrentHashMap<Thread, Integer>();
 
-        this.highestDoneMutex = new ReentrantLock();
         this.highestDone = new int[this.peers.length];
-        Arrays.fill(highestDone, -1);
+        Arrays.fill(this.highestDone, -1);
 
         // register peers, do not modify this part
         try {
@@ -148,14 +140,13 @@ public class Paxos implements PaxosRMI, Runnable {
             return;
         }
 
-        // HashMaps are not thread safe, so we need to use a lock when accessing
-        this.mutex.lock();
-        instances.put(seq, new PaxosInstance());
-        this.seq = seq;
-        this.value = value;
-        this.mutex.unlock();
+        PaxosInstance instance = new PaxosInstance();
+        instance.initialValue = value;
+        this.instances.put(seq, instance);
 
         Thread thread = new Thread(this);
+        this.seqs.put(thread, seq);
+
         thread.start();
     }
 
@@ -177,11 +168,9 @@ public class Paxos implements PaxosRMI, Runnable {
      */
     @Override
     public void run() {
-        this.mutex.lock();
-        int seq = this.seq;
-        Object value = this.value;
-        PaxosInstance instance = instances.get(seq);
-        this.mutex.unlock();
+        int seq = this.seqs.remove(Thread.currentThread());
+        PaxosInstance instance = this.instances.get(seq);
+        Object value = instance.initialValue;
 
         int highestProposalSeen = -1;
         int numPeers = this.peers.length;
@@ -285,12 +274,10 @@ public class Paxos implements PaxosRMI, Runnable {
         // Request PID = Proposal Number % Number of Peers
         this.updateHighestDone(req.proposal % this.peers.length, req.highestDone);
 
-        this.mutex.lock();
-        if (!instances.containsKey(seq)) {
-            instances.put(seq, new PaxosInstance());
+        if (!this.instances.containsKey(seq)) {
+            this.instances.put(seq, new PaxosInstance());
         }
-        PaxosInstance instance = instances.get(seq);
-        this.mutex.unlock();
+        PaxosInstance instance = this.instances.get(seq);
 
         if (req.proposal > instance.highestPrepare) {
             // This is the highest proposal number we have seen, so we return a promise
@@ -324,12 +311,10 @@ public class Paxos implements PaxosRMI, Runnable {
         int seq = req.seq;
         this.updateHighestDone(req.proposal % this.peers.length, req.highestDone);
 
-        this.mutex.lock();
-        if (!instances.containsKey(seq)) {
-            instances.put(seq, new PaxosInstance());
+        if (!this.instances.containsKey(seq)) {
+            this.instances.put(seq, new PaxosInstance());
         }
-        PaxosInstance instance = instances.get(seq);
-        this.mutex.unlock();
+        PaxosInstance instance = this.instances.get(seq);
 
         if (req.proposal >= instance.highestPrepare) {
             // The proposal is >= the highest prepare proposal we have seen. So we update
@@ -352,12 +337,10 @@ public class Paxos implements PaxosRMI, Runnable {
         int seq = req.seq;
         this.updateHighestDone(req.proposal % this.peers.length, req.highestDone);
 
-        this.mutex.lock();
-        if (!instances.containsKey(seq)) {
-            instances.put(seq, new PaxosInstance());
+        if (!this.instances.containsKey(seq)) {
+            this.instances.put(seq, new PaxosInstance());
         }
-        PaxosInstance instance = instances.get(seq);
-        this.mutex.unlock();
+        PaxosInstance instance = this.instances.get(seq);
 
         // We will only receive a decide request if the sender has received a majority
         // of acknowledged accept requests. So it is safe to update our status to decided.
@@ -378,17 +361,17 @@ public class Paxos implements PaxosRMI, Runnable {
         }
 
         // Update array index
-        this.highestDoneMutex.lock();
         this.highestDone[index] = highestDone;
-        this.highestDoneMutex.unlock();
 
         // Get the minimum in the array
         int min = this.Min();
 
         // Discard all instances with seq < min
-        this.mutex.lock();
-        this.instances.entrySet().removeIf(entry -> (entry.getKey() < min));
-        this.mutex.unlock();
+        this.instances.forEach((seq, instance) -> {
+            if (seq < min) {
+                this.instances.remove(seq, instance);
+            }
+        });
     }
 
     /**
@@ -399,9 +382,7 @@ public class Paxos implements PaxosRMI, Runnable {
      */
     public void Done(int seq) {
         // Update this peer's highestDone element
-        this.highestDoneMutex.lock();
-        this.highestDone[this.me] = Math.max(this.highestDone[this.me], seq);
-        this.highestDoneMutex.unlock();
+        this.updateHighestDone(this.me, Math.max(this.highestDone[this.me], seq));
     }
 
     /**
@@ -413,11 +394,9 @@ public class Paxos implements PaxosRMI, Runnable {
         // Compute the max as the largest instance in instances
         int max = -1;
 
-        this.mutex.lock();
-        for (int seq : instances.keySet()) {
+        for (int seq : this.instances.keySet()) {
             max = Math.max(max, seq);
         }
-        this.mutex.unlock();
 
         return max;
     }
@@ -453,11 +432,9 @@ public class Paxos implements PaxosRMI, Runnable {
     public int Min() {
         // Compute the min as the smallest value in highestDone
         int min = Integer.MAX_VALUE;
-        this.highestDoneMutex.lock();
         for (int i = 0; i < this.highestDone.length; i++) {
-            min = Math.min(min, highestDone[i]);
+            min = Math.min(min, this.highestDone[i]);
         }
-        this.highestDoneMutex.unlock();
         return min + 1;
     }
 
@@ -474,12 +451,10 @@ public class Paxos implements PaxosRMI, Runnable {
             return new retStatus(State.Forgotten, null);
         }
 
-        this.mutex.lock();
-        if (!instances.containsKey(seq)) {
-            instances.put(seq, new PaxosInstance());
+        if (!this.instances.containsKey(seq)) {
+            this.instances.put(seq, new PaxosInstance());
         }
-        PaxosInstance instance = instances.get(seq);
-        this.mutex.unlock();
+        PaxosInstance instance = this.instances.get(seq);
 
         return instance.status;
     }
