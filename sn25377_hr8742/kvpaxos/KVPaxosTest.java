@@ -2,6 +2,8 @@ package kvpaxos;
 
 import org.junit.Test;
 import static org.junit.Assert.*;
+import java.util.HashMap;
+import java.util.Random;
 
 /**
  * This is a subset of entire test cases
@@ -30,8 +32,21 @@ public class KVPaxosTest {
             kva[i] = new Server(peers, ports, i);
         }
 
+        HashMap<String, Integer> map = new HashMap<String, Integer>();
+
         Client ck = new Client(peers, ports);
+        int low = 0;
+        int high = 3;
+        Random rand = new Random();
         System.out.println("Test: Basic put/get ...");
+        for (int i = 0; i < 100; i++) {
+            String key = "test" + rand.nextInt(high - low) + low;
+            Integer value = rand.nextInt(high - low) + low;
+            map.put(key, value);
+            ck.Put(key, value);
+            check(ck, key, value);
+
+        }
         ck.Put("app", 6);
         check(ck, "app", 6);
         ck.Put("a", 70);
