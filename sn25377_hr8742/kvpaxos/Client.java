@@ -48,13 +48,34 @@ public class Client {
 
     // RMI handlers
     public Integer Get(String key) {
-        // Your code here
-        return 0;
+        Integer value;
+        Request req = new Request(key);
+        // Infinite loop over servers until get request has been completed
+        for (int i = 0;; i = (i + 1) % this.servers.length) {
+            Response resp = this.Call("Get", req, i);
+            if (resp == null || !resp.ack) {
+                // Call timed out or request was rejected
+                continue;
+            }
+            value = resp.value;
+            break;
+        }
+        return value;
     }
 
     public boolean Put(String key, Integer value) {
-        // Your code here
-        return true;
+        boolean put;
+        Request req = new Request(key, value);
+        // Infinite loop over servers until put request has been completed
+        for (int i = 0;; i = (i + 1) % this.servers.length) {
+            Response resp = this.Call("Put", req, i);
+            if (resp == null || !resp.ack) {
+                // Call timed out or request was rejected
+                continue;
+            }
+            put = resp.ack;
+            break;
+        }
+        return put;
     }
-
 }

@@ -9,6 +9,20 @@ import java.io.Serializable;
 public class Response implements Serializable {
     static final long serialVersionUID = 22L;
     // your data here
+    boolean ack;
+    Integer value;
 
     // Your constructor and methods here
+
+    // Get request response
+    public Response(Integer value) {
+        this.ack = true;
+        this.value = value;
+    }
+
+    // Put request response
+    public Response(boolean ack) {
+        this.ack = ack;
+        this.value = -1;
+    }
 }
