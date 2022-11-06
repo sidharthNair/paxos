@@ -34,23 +34,41 @@ public class KVPaxosTest {
 
         HashMap<String, Integer> map = new HashMap<String, Integer>();
 
-        Client ck = new Client(peers, ports);
-        int low = 0;
-        int high = 3;
-        Random rand = new Random();
+
+        Client[] clients = new Client[5];
+        for (int i = 0; i < clients.length; i++) {
+            clients[i] = new Client(peers, ports);
+        }
+
         System.out.println("Test: Basic put/get ...");
-        for (int i = 0; i < 100; i++) {
-            String key = "test" + rand.nextInt(high - low) + low;
-            Integer value = rand.nextInt(high - low) + low;
+
+        Random rand = new Random();
+        clients[rand.nextInt(clients.length)].Put("app", 6);
+        clients[rand.nextInt(clients.length)].Put("a", 70);
+
+        int low = 0;
+        int high = 4;
+        int iterations = 100;
+        for (int i = 0; i < iterations; i++) {
+            String key = "test" + (rand.nextInt(high - low) + low);
+            Integer value = rand.nextInt(high - low) * 18 + low - 13;
             map.put(key, value);
-            ck.Put(key, value);
-            check(ck, key, value);
+            clients[rand.nextInt(clients.length)].Put(key, value);
+            key = "test" + (rand.nextInt(high - low) + low);
+            if (map.get(key) != null) {
+                check(clients[rand.nextInt(clients.length)], key, map.get(key));
+            }
+            if (i % (iterations / ((ports.length / 2) + (ports.length % 2) - 1)) == 0) {
+                // Kill a server
+                int index = rand.nextInt(ports.length);
+                // System.out.println("Killing " + index);
+                ports[index] = 1;
+            }
 
         }
-        ck.Put("app", 6);
-        check(ck, "app", 6);
-        ck.Put("a", 70);
-        check(ck, "a", 70);
+
+        check(clients[rand.nextInt(clients.length)], "app", 6);
+        check(clients[rand.nextInt(clients.length)], "a", 70);
 
         System.out.println("... Passed");
 

@@ -8,8 +8,8 @@ import java.rmi.registry.LocateRegistry;
 import java.rmi.registry.Registry;
 import java.rmi.server.UnicastRemoteObject;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.ArrayList;
 
 public class Server implements KVPaxosRMI {
 
@@ -24,7 +24,8 @@ public class Server implements KVPaxosRMI {
 
     // Your definitions here
     AtomicInteger currentSeq;
-    ArrayList<Op> paxosLog;
+    int processedSeq;
+    HashMap<String, Integer> table;
 
     public Server(String[] servers, int[] ports, int me) {
         this.me = me;
@@ -35,7 +36,8 @@ public class Server implements KVPaxosRMI {
 
         // Your initialization code here
         this.currentSeq = new AtomicInteger(0);
-        this.paxosLog = new ArrayList<Op>();
+        this.processedSeq = 0;
+        this.table = new HashMap<String, Integer>();
 
         try {
             System.setProperty("java.rmi.server.hostname", this.servers[this.me]);
@@ -47,6 +49,36 @@ public class Server implements KVPaxosRMI {
         }
     }
 
+    public synchronized Integer processOp(Op op) {
+        // Makes sure to process operations in order, just in case the
+        // server has a get and put request made at the same time.
+        while (this.processedSeq != op.ClientSeq) {
+            try {
+                this.wait();
+            } catch (InterruptedException e) {
+                // This should never happen
+                Thread.currentThread().interrupt();
+                return null;
+            }
+        }
+
+        Integer returnVal = null;
+        if (op.op.equals("Get") && (this.me == op.me)) {
+            // Skips overhead of looking up the key if the Get wasn't made by me
+            returnVal = table.get(op.key);
+
+            // System.out.println(this.me + " GET " + op.key + ":" + returnVal);
+        } else if (op.op.equals("Put")) {
+            returnVal = table.put(op.key, op.value);
+
+            // System.out.println(this.me + " PUT " + op.key + ":" + op.value);
+        }
+
+        this.processedSeq++;
+        this.notifyAll();
+        return returnVal;
+    }
+
     // RMI handlers
     public Response Get(Request req) {
         Integer value = -1;
@@ -54,16 +86,10 @@ public class Server implements KVPaxosRMI {
             Op op = new Op(this.me, "Get", this.currentSeq.getAndIncrement(), req.key, -1);
             this.px.Start(op.ClientSeq, op);
             Op result = wait(op.ClientSeq);
-            this.paxosLog.add(result);
+            // Process the operation
+            value = this.processOp(result);
             if (result.equals(op)) {
                 this.px.Done(op.ClientSeq);
-                break;
-            }
-        }
-        for (int i = this.paxosLog.size() - 1; i >= 0; i--) {
-            Op op = this.paxosLog.get(i);
-            if (op.op.equals("Put") && op.key.equals(req.key)) {
-                value = op.value;
                 break;
             }
         }
@@ -75,7 +101,8 @@ public class Server implements KVPaxosRMI {
             Op op = new Op(this.me, "Put", this.currentSeq.getAndIncrement(), req.key, req.value);
             this.px.Start(op.ClientSeq, op);
             Op result = wait(op.ClientSeq);
-            this.paxosLog.add(result);
+            // Process the operation
+            this.processOp(result);
             if (result.equals(op)) {
                 this.px.Done(op.ClientSeq);
                 break;
