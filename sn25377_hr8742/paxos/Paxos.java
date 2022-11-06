@@ -140,7 +140,16 @@ public class Paxos implements PaxosRMI, Runnable {
             return;
         }
 
-        PaxosInstance instance = new PaxosInstance();
+        PaxosInstance instance = this.instances.get(seq);
+        if (instance != null) {
+            if (instance.status.state == State.Decided) {
+                // We've already decided so no need to propose
+                return;
+            }
+        }
+        else {
+            instance = new PaxosInstance();
+        }
         instance.initialValue = value;
         this.instances.put(seq, instance);
 
@@ -397,11 +406,7 @@ public class Paxos implements PaxosRMI, Runnable {
      */
     public int Max() {
         // Compute the max as the largest instance in instances
-        int max = -1;
-
-        for (int seq : this.instances.keySet()) {
-            max = Math.max(max, seq);
-        }
+        int max = this.instances.reduceKeys(1, (seq1, seq2) -> Math.max(seq1, seq2));
 
         return max;
     }
